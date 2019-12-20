@@ -23,7 +23,7 @@ PATH_TO_DATA = '../data'
 sys.path.insert(0, PATH_TO_SENTEVAL)
 import discoeval 
 
-from transformers import BertConfig, BertTokenizer, BertModel, BertForPreTraining
+from transformers import BertConfig, BertTokenizer, BertModel, BertForPreTraining, RobertaTokenizer, RobertaModel, RobertaConfig
 
 # SentEval prepare and batcher
 def prepare(params, samples):
@@ -66,38 +66,18 @@ def batcher(params, batch, batch2=None):
     tokenizer = params.tokenizer
     batch = [[token.lower() for token in sent] for sent in batch]
     batch = [" ".join(sent) if sent != [] else "." for sent in batch]
-    batch = [["[CLS]"] + tokenizer.tokenize(sent) + ["[SEP]"] for sent in batch]
-    segment_1 = [[0] * len(seq) for seq in batch]
     if batch2 is not None:
         batch2 = [[token.lower() for token in sent] for sent in batch2]
         batch2 = [" ".join(sent) if sent != [] else "." for sent in batch2]
-        batch2 = [tokenizer.tokenize(sent) + ["[SEP]"] for sent in batch2]
-        for i in range(len(batch)):
-            if len(batch[i]) + len(batch2[i]) > 512:
-                while len(batch[i]) + len(batch2[i]) > 512:
-                    if len(batch[i]) > len(batch2[i]):
-                        del batch[i][-2]
-                    else:
-                        del batch2[i][-2]
-        segment_1 = [[0] * len(seq) for seq in batch]
-        segment_2 = [[1] * len(seq) for seq in batch2]
-        batch = [a+b for a,b in zip(batch, batch2)]
+        batch = [tokenizer.encode_plus(sent1, sent2, add_special_tokens=True, max_length=512)["input_ids"]
+                 for sent1, sent2 in zip(batch, batch2)]
     else:
-        segment_2 = [[] for _ in batch]
-        segment_1 = [sg[:512] for sg in segment_1]
+        batch = [tokenizer.encode_plus(sent1, None, add_special_tokens=True, max_length=512)["input_ids"]
+                 for sent1 in batch, batch2]
 
-    batch = [b[:512] for b in batch]
-    seq_length = max([len(sent) for sent in batch])
-    mask = [[1]*len(sent) + [0]*(seq_length-len(sent)) for sent in batch]
-    # segment_ids = [[0]*seq_length for _ in batch]
-    segment_ids = [a + b for a,b in zip(segment_1, segment_2)]
-    segment_ids = [si + [0] * (seq_length - len(si)) for si in segment_ids]
-    batch = [tokenizer.convert_tokens_to_ids(sent) + [0]*(seq_length - len(sent)) for sent in batch]
     with torch.no_grad():
         batch = torch.tensor(batch).cuda()
-        mask = torch.tensor(mask).cuda() # bs * seq_length
-        segment_ids = torch.tensor(segment_ids).cuda()   	
-        outputs, pooled_output, hidden_states, _ = model(batch, token_type_ids=segment_ids, attention_mask=mask)
+        outputs, pooled_output, hidden_states = model(batch)
         if layer == "avg":
             output = [o.data.cpu()[:, 0].numpy() for o in hidden_states]
             embeddings = np.mean(output, 0)
@@ -124,7 +104,7 @@ if __name__ == "__main__":
                         help="which layer to evaluate on")
     parser.add_argument("--model_type", default="base", type=str, required=True, choices=["base", "large"],
                         help="the type of BERT model to evaluate on")
-    parser.add_argument("--weights", default="conpono", type=str, required=True, choices=["bert", "conpono"],
+    parser.add_argument("--weights", default="conpono", type=str, required=True, choices=["bert", "conpono", "roberta"],
                         help="model weights")
     parser.add_argument("--data_path", default="./data/", type=str, required=False,
                         help="data path")
@@ -144,11 +124,16 @@ if __name__ == "__main__":
     config = BertConfig.from_pretrained('bert-{}-uncased'.format(args.model_type))
     config.output_hidden_states = True
     config.output_attentions = True
-    tokenizer = BertTokenizer.from_pretrained('bert-{}-uncased'.format(args.model_type))
+    tokenizer = RobertaTokenizer.from_pretraining("roberta-base", cache_dir=args.cache_path)
+    # BertTokenizer.from_pretrained('bert-{}-uncased'.format(args.model_type))
     if args.weights == "bert":
         model = BertModel.from_pretrained('bert-{}-uncased'.format(args.model_type), cache_dir=args.cache_dir, config=config).cuda()
     elif args.weights == "conpono":
         model = BertModel.from_pretrained('./models/conpono', config=config).cuda()
+    elif args.weights == "roberta":
+        config = RobertaConfig.from_pretrained("roberta-base")
+        config.output_hidden_states = True
+        model = RobertaModel.from_pretrained("roberta-base", config=config, cache_dir=args.cache_path).cude()
     model.eval()
 
     # Set params for SentEval

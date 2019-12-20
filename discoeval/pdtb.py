@@ -16,6 +16,7 @@ import io
 import copy
 import logging
 import numpy as np
+from tqdm import tqdm
 
 from discoeval.tools.validation import SplitClassifier
 
@@ -25,7 +26,7 @@ class PDTBEval(object):
         self.seed = seed
 
         logging.debug('***** Transfer task : PDTB classification, task path: {} *****\n\n'.format(task_path))
-
+        self.task_name = os.path.basename(task_path)
         train = self.loadFile(os.path.join(task_path, 'train.txt'))
         valid = self.loadFile(os.path.join(task_path, 'valid.txt'))
         test = self.loadFile(os.path.join(task_path, 'test.txt'))
@@ -55,28 +56,38 @@ class PDTBEval(object):
     def run(self, params, batcher):
         self.X, self.y = {}, {}
         for key in self.data:
-            if key not in self.X:
-                self.X[key] = []
-            if key not in self.y:
-                self.y[key] = []
+            x_data_filename = "/tmp/PDTB-%s-conpono-%s-x.npy" % (self.task_name, key)
+            y_data_filename = "/tmp/PDTB-%s-conpono-%s-y.npy" % (self.task_name, key)
+            if os.path.isfile(x_data_filename):
+                assert os.path.isfile(y_data_filename), "Labels don't exist"
+                self.X[key] = np.load(x_data_filename)
+                self.y[key] = np.load(y_data_filename)
+                input1, input2, mylabels = self.data[key]
+            else:
+                if key not in self.X:
+                    self.X[key] = []
+                if key not in self.y:
+                    self.y[key] = []
 
-            input1, input2, mylabels = self.data[key]
-            enc_input = []
-            n_labels = len(mylabels)
-            for ii in range(0, n_labels, params.batch_size):
-                batch1 = input1[ii:ii + params.batch_size]
-                batch2 = input2[ii:ii + params.batch_size]
+                input1, input2, mylabels = self.data[key]
+                enc_input = []
+                n_labels = len(mylabels)
+                for ii in tqdm(range(0, n_labels, params.batch_size), total=n_labels / params.batch_size):
+                    batch1 = input1[ii:ii + params.batch_size]
+                    batch2 = input2[ii:ii + params.batch_size]
 
-                if len(batch1) == len(batch2) and len(batch1) > 0:
-                    enc1 = batcher(params, batch1)
-                    enc2 = batcher(params, batch2)
-                    enc_input.append(np.hstack((enc1, enc2, enc1 * enc2,
-                                                np.abs(enc1 - enc2))))
-                if (ii*params.batch_size) % (20000*params.batch_size) == 0:
-                    logging.info("PROGRESS (encoding): %.2f%%" %
-                                 (100 * ii / n_labels))
-            self.X[key] = np.vstack(enc_input)
-            self.y[key] = np.array(mylabels)
+                    if len(batch1) == len(batch2) and len(batch1) > 0:
+                        enc1 = batcher(params, batch1)
+                        enc2 = batcher(params, batch1, batch2)
+                        enc_input.append(np.hstack((enc1, enc2, enc1 * enc2,
+                                                    np.abs(enc1 - enc2))))
+                    if (ii*params.batch_size) % (20000*params.batch_size) == 0:
+                        logging.info("PROGRESS (encoding): %.2f%%" %
+                                     (100 * ii / n_labels))
+                self.X[key] = np.vstack(enc_input)
+                self.y[key] = np.array(mylabels)
+                np.save(x_data_filename, self.X[key])
+                np.save(y_data_filename, self.y[key])
 
 
             logging.info("encoding X to be: {}".format(self.X[key].shape))
@@ -87,7 +98,7 @@ class PDTBEval(object):
                   'nhid': params.nhid, 'noreg': True}
 
         config_classifier = copy.deepcopy(params.classifier)
-        config_classifier['max_epoch'] = 15
+        config_classifier['max_epoch'] = 55
         config_classifier['epoch_size'] = 1
         config['classifier'] = config_classifier
 

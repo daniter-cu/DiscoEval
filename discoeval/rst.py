@@ -24,6 +24,7 @@ class RSTEval(object):
     def __init__(self, taskpath, seed=1111):
         logging.debug('***** Transfer task : RST-DT Task at {}*****\n\n'.format(taskpath))
         self.seed = seed
+        self.task_name = "RST"
 
         train_sents, train_labels = self.loadFile(os.path.join(taskpath, 'RST_TRAIN.pkl'))
         valid_sents, valid_labels = self.loadFile(os.path.join(taskpath, 'RST_DEV.pkl'))
@@ -56,49 +57,36 @@ class RSTEval(object):
         self.X, self.y = {}, {}
         dico_label = {k: v for v, k in enumerate(self.labelset)}
         for key in self.data:
-            if key not in self.X:
-                self.X[key] = []
-            if key not in self.y:
-                self.y[key] = []
+            x_data_filename = "/tmp/RST-%s-conpono-%s-x.npy" % (self.task_name, key)
+            y_data_filename = "/tmp/RST-%s-conpono-%s-y.npy" % (self.task_name, key)
+            if os.path.isfile(x_data_filename):
+                assert os.path.isfile(y_data_filename), "Labels don't exist"
+                self.X[key] = np.load(x_data_filename)
+                self.y[key] = np.load(y_data_filename)
+            else:
+                if key not in self.X:
+                    self.X[key] = []
+                if key not in self.y:
+                    self.y[key] = []
 
-            input, labels = self.data[key]
+                input, labels = self.data[key]
 
-            logging.debug('split: {}, #data: {}'.format(key, len(input)))
-            enc_input = []
-            sent2vec = {}
-            for ii in range(0, len(input), params.batch_size):
-                batch = input[ii:ii + params.batch_size]
-
-                encs1 = []
-                encs2 = []
-                if len(batch):
-                    s2enc = []
-                    for edus in batch:
-                        for s in edus[0]:
-                            if s not in sent2vec:
-                                s2enc.append(s)
-                        for s in edus[1]:
-                            if s not in sent2vec:
-                                s2enc.append(s)
-                    if len(s2enc):
-                        s2enc = sorted(s2enc, key=lambda x: len(x.split()))
-                        encs1_ = []
-                        for iii in range(0, len(s2enc), params.batch_size):
-                            s2enc_ = [s.split() for s in s2enc[iii: iii + params.batch_size]]
-                            encs1_.append(batcher(params, s2enc_))
-                        for s, e in zip(s2enc, np.concatenate(encs1_)):
-                            sent2vec[s] = e
-                    encs1 = [np.stack([sent2vec[s] for s in ed[0]]).mean(0) for ed in batch]
-                    encs2 = [np.stack([sent2vec[s] for s in ed[1]]).mean(0) for ed in batch]
-                    enc1 = np.stack(encs1)
-                    enc2 = np.stack(encs2)
-                    enc_input.append(np.hstack((enc1, enc2, enc1 * enc2,
-                                                np.abs(enc1 - enc2))))
-                if ii % (100*params.batch_size) == 0:
-                    logging.info("PROGRESS (encoding): %.2f%%" %
-                                 (100 * ii / len(input)))
-            self.X[key] = np.vstack(enc_input)
-            self.y[key] = np.array([dico_label[y] for y in labels])
+                logging.debug('split: {}, #data: {}'.format(key, len(input)))
+                enc_input = []
+                sent2vec = {}
+                for ii in range(0, len(input), params.batch_size):
+                    batch = input[ii:ii + params.batch_size]
+                    seq1 = [b[0] for b in batch]
+                    seq2 = [b[1] for b in batch]
+                    emb = batcher(params, seq1, seq2)
+                    enc_input.append(emb)
+                    if ii % (100*params.batch_size) == 0:
+                        logging.info("PROGRESS (encoding): %.2f%%" %
+                                     (100 * ii / len(input)))
+                self.X[key] = np.vstack(enc_input)
+                self.y[key] = np.array([dico_label[y] for y in labels])
+                np.save(x_data_filename, self.X[key])
+                np.save(y_data_filename, self.y[key])
 
 
             logging.info("encoding X to be: {}".format(self.X[key].shape))

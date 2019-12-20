@@ -16,6 +16,7 @@ import io
 import logging
 import numpy as np
 import copy
+from tqdm import tqdm
 
 from discoeval.tools.validation import SplitClassifier
 
@@ -57,36 +58,42 @@ class SPEval(object):
         embed = {'train': {}, 'valid': {}, 'test': {}}
         bsize = params.batch_size
 
-
         for key in self.data:
-            logging.info('Computing embedding for {0}'.format(key))
-            embed[key]['X'] = []
-            for i in range(self.nclasses):
-                embeddings_i = []
-                for ii in range(0, len(self.data[key]["X"]), bsize):
-                    batch = [sents[i] for sents in self.data[key]["X"][ii:ii + bsize]]
-                    embeddings = batcher(params, batch)
-                    embeddings_i.append(embeddings)
-
-                embeddings_i = np.expand_dims(np.vstack(embeddings_i), -1)
-                embed[key]["X"].append(embeddings_i)
-            
-            embed[key]["X"] = np.concatenate(embed[key]["X"], -1)
-            x1 = embed[key]["X"][:, :, 0]
-            x2 = x1 - embed[key]["X"][:, :, 1]
-            x3 = x1 - embed[key]["X"][:, :, 2]
-            x4 = x1 - embed[key]["X"][:, :, 3]
-            x5 = x1 - embed[key]["X"][:, :, 4]
-            embed[key]["X"] = np.concatenate([x1, x2, x3, x4, x5], -1)
-
-            embed[key]['y'] = np.array(self.data[key]['y'])
-            logging.info('Computed {0} embeddings, shape: {1}'.format(key, embed[key]["X"].shape))
+            x_data_filename = "/tmp/SP-%s-conpono-%s-x.npy" % (self.task_name, key)
+            y_data_filename = "/tmp/SP-%s-conpono-%s-y.npy" % (self.task_name, key)
+            if os.path.isfile(x_data_filename):
+                assert os.path.isfile(y_data_filename), "Labels don't exist"
+                embed[key]['X'] = np.load(x_data_filename)
+                embed[key]['y'] = np.load(y_data_filename)
+            else:
+                logging.info('Computing embedding for {0}'.format(key))
+                embed[key]['X'] = []
+                for j in tqdm(range(0, len(self.data[key]['X']), bsize), total=len(self.data[key['X']]) / bsize):
+                    batch_embed = []
+                    batch1 = [sents[0] for sents in self.data[key]['X'][j:j + bsize]]
+                    embed1 = batcher(params, batch1)
+                    batch_embed.append(embed1)
+                    for i in range(1,5):
+                        batch2 = [sents[i] for sents in self.data[key]['X'][j:j + bsize]]
+                        embed2 = batcher(params, batch1, batch2)
+                        batch_embed.append(embed2)
+                    embed[key]['X'].append(np.hstack(batch_embed))
+                embed[key]['X'] = np.vstack(embed[key]['X'])
+                embed[key]['y'] = np.array(self.data[key]['y'])
+                np.save(x_data_filename, embed[key]['X'])
+                np.save(y_data_filename, embed[key]['y'])
+                logging.info('Computed {0} embeddings, shape: {1}'.format(key, embed[key]["X"].shape))
 
 
 
         config_classifier = {'nclasses': self.nclasses, 'seed': self.seed,
                              'usepytorch': params.usepytorch,
-                             'classifier': params.classifier}
+                             'classifier': params.classifier,
+                             'noreg': True}
+        params.classifier['nhid'] = 50
+        params.classifier['tenacity'] = 20
+        params.classifier['epoch_size'] = 1
+        params.classifier['max_epoch'] = 20
 
         clf = SplitClassifier(X={'train': embed['train']['X'],
                                  'valid': embed['valid']['X'],
@@ -144,24 +151,26 @@ class BSOEval(object):
         bsize = params.batch_size
 
         for key in self.data:
-            logging.info('Computing embedding for {0}'.format(key))
-            embed[key]['X'] = []
-            for i in range(len(self.data[key]["X"][0])):
-                embeddings_i = []
-                for ii in range(0, len(self.data[key]["X"]), bsize):
-                    batch = [sents[i] for sents in self.data[key]["X"][ii:ii + bsize]]
-                    embeddings = batcher(params, batch)
-                    embeddings_i.append(embeddings)
-
-                embeddings_i = np.vstack(embeddings_i)
-                embed[key]["X"].append(embeddings_i)
-            
-            x1 = embed[key]["X"][0]
-            x2 = embed[key]["X"][1]
-            x_sub = x1 - x2
-
-            pos = np.concatenate([x1, x2, x_sub], -1)
-            neg = np.concatenate([copy.deepcopy(x2), copy.deepcopy(x1), -copy.deepcopy(x_sub)], -1)
+            pos_data_filename = "/tmp/BSO-%s-conpono-%s-x.npy" % (self.task_name, key)
+            neg_data_filename = "/tmp/BSO-%s-conpono-%s-y.npy" % (self.task_name, key)
+            if os.path.isfile(pos_data_filename):
+                assert os.path.isfile(neg_data_filename), "Labels don't exist"
+                pos = np.load(pos_data_filename)
+                neg = np.load(neg_data_filename)
+            else:
+                logging.info('Computing embedding for {0}'.format(key))
+                pos, neg = [], []
+                for ii in tqdm(range(0, len(self.data[key]['X']), bsize), total=len(self.data[key]['X'])/ bsize):
+                    batch1 = [sents[0] for sents in self.data[key]['X'][ii:ii + bsize]]
+                    batch2 = [sents[1] for sents in self.data[key]['X'][ii:ii + bsize]]
+                    embeddings = batcher(params, batch1, batch2)
+                    neg_embeddings = batcher(params, batch2, batch1)
+                    pos.append(embeddings)
+                    neg.append(neg_embeddings)
+                pos = np.vstack(pos)
+                neg = np.vstack(neg)
+                np.save(pos_data_filename, pos)
+                np.save(neg_data_filename, neg)
 
             y = [1] * len(pos) + [0] * len(neg)
             permute = np.random.permutation(len(y))
@@ -171,11 +180,13 @@ class BSOEval(object):
             embed[key]["X"] = X
             embed[key]["y"] = y
 
+
             logging.info('Computed {0} embeddings, shape: {1}'.format(key, embed[key]["X"].shape))
 
         config_classifier = {'nclasses': self.nclasses, 'seed': self.seed,
                              'usepytorch': params.usepytorch,
-                             'classifier': params.classifier}
+                             'classifier': params.classifier,
+                             'noreg': True}
 
         clf = SplitClassifier(X={'train': embed['train']['X'],
                                  'valid': embed['valid']['X'],
@@ -230,25 +241,33 @@ class DCEval(object):
         bsize = params.batch_size
 
         for key in self.data:
-            logging.info('Computing embedding for {0}'.format(key))
-            embed[key]['X'] = []
-            for i in range(len(self.data[key]["X"][0])):
+            x_data_filename = "/tmp/DC-%s-conpono-%s-x.npy" % (self.task_name, key)
+            y_data_filename = "/tmp/DC-%s-conpono-%s-y.npy" % (self.task_name, key)
+            if os.path.isfile(x_data_filename):
+                assert os.path.isfile(y_data_filename), "Labels don't exist"
+                embed[key]['X'] = np.load(x_data_filename)
+                embed[key]['y'] = np.load(y_data_filename)
+            else:
+                logging.info('Computing embedding for {0}'.format(key))
                 embeddings_i = []
-                for ii in range(0, len(self.data[key]["X"]), bsize):
-                    batch = [sents[i] for sents in self.data[key]["X"][ii:ii + bsize]]
-                    embeddings = batcher(params, batch)
-                    embeddings_i.append(embeddings)
-
-                embeddings_i = np.vstack(embeddings_i)
-                embed[key]["X"].append(embeddings_i)
-            
-            embed[key]["X"] = np.hstack(embed[key]["X"])
-            embed[key]['y'] = np.array(self.data[key]['y'])
-            logging.info('Computed {0} embeddings, shape: {1}'.format(key, embed[key]["X"].shape))   
+                for i in tqdm(range(0, len(self.data[key]['X']), bsize), total=len(self.data[key]['X'])/bsize):
+                    para_embeddings = []
+                    for j in range(0,6,2):
+                        batch1 = [sents[j:j+1] for sents in self.data[key]['X'][i:i+bsize]]
+                        batch2 = [sents[j+1:j+2] for sents in self.data[key]['X'][i:i+bsize]]
+                        embeddings = batcher(params, batch1, batch2)
+                        para_embeddings.append(embeddings)
+                    embeddings_i.append(np.hstack(para_embeddings))
+                embed[key]['X'] = np.vstack(embeddings_i)
+                embed[key]['y'] = np.array(self.data[key]['y'])
+                np.save(x_data_filename, embed[key]['X'])
+                np.save(y_data_filename, embed[key]['y'])
+                logging.info('Computed {0} embeddings, shape: {1}'.format(key, embed[key]["X"].shape))
 
         params.classifier["nhid"] = 2000
-        params.classifier["tenacity"] = 8
-        params.classifier["epoch_size"] = 15
+        params.classifier["tenacity"] = 80
+        params.classifier["epoch_size"] = 4
+        params.classifier["max_epoch"] = 40
         config_classifier = {'nclasses': self.nclasses, 'seed': self.seed,
                              'usepytorch': params.usepytorch,
                              'noreg': True, 
@@ -306,16 +325,25 @@ class SSPEval(object):
         bsize = params.batch_size
 
         for key in self.data:
-            logging.info('Computing embedding for {0}'.format(key))
-            embed[key]['X'] = []
-            embeddings = []
-            for ii in range(0, len(self.data[key]["X"]), bsize):
-                batch = self.data[key]["X"][ii:ii + bsize]
-                embeddings.append(batcher(params, batch))
-            embeddings = np.vstack(embeddings)
-            embed[key]["X"] = embeddings
-            embed[key]['y'] = np.array(self.data[key]['y'])
-            logging.info('Computed {0} embeddings, shape: {1}'.format(key, embed[key]["X"].shape))   
+            x_data_filename = "/tmp/SSP-%s-conpono-%s-x.npy" % (self.task_name, key)
+            y_data_filename = "/tmp/SSP-%s-conpono-%s-y.npy" % (self.task_name, key)
+            if os.path.isfile(x_data_filename):
+                assert os.path.isfile(y_data_filename), "Labels don't exist"
+                embed[key]['X'] = np.load(x_data_filename)
+                embed[key]['y'] = np.load(y_data_filename)
+            else:
+                logging.info('Computing embedding for {0}'.format(key))
+                embed[key]['X'] = []
+                embeddings = []
+                for ii in range(0, len(self.data[key]["X"]), bsize):
+                    batch = self.data[key]["X"][ii:ii + bsize]
+                    embeddings.append(batcher(params, batch))
+                embeddings = np.vstack(embeddings)
+                embed[key]["X"] = embeddings
+                embed[key]['y'] = np.array(self.data[key]['y'])
+                np.save(x_data_filename, embed[key]['X'])
+                np.save(y_data_filename, embed[key]['y'])
+                logging.info('Computed {0} embeddings, shape: {1}'.format(key, embed[key]["X"].shape))
 
         config_classifier = {'nclasses': self.nclasses, 'seed': self.seed,
                              'usepytorch': params.usepytorch,
