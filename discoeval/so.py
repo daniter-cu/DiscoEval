@@ -68,7 +68,7 @@ class SPEval(object):
             else:
                 logging.info('Computing embedding for {0}'.format(key))
                 embed[key]['X'] = []
-                for j in tqdm(range(0, len(self.data[key]['X']), bsize), total=len(self.data[key['X']]) / bsize):
+                for j in tqdm(range(0, len(self.data[key]['X']), bsize), total=len(self.data[key]['X']) / bsize):
                     batch_embed = []
                     batch1 = [sents[0] for sents in self.data[key]['X'][j:j + bsize]]
                     embed1 = batcher(params, batch1)
