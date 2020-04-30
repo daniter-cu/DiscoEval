@@ -146,7 +146,7 @@ if __name__ == "__main__":
     config.output_attentions = True
     tokenizer = BertTokenizer.from_pretrained('bert-{}-uncased'.format(args.model_type))
     if args.weights == "bert":
-        model = BertModel.from_pretrained('bert-{}-uncased'.format(args.model_type), cache_dir=args.cache_dir, config=config).cuda()
+        model = BertModel.from_pretrained('bert-{}-uncased'.format(args.model_type), cache_dir=args.cache_path, config=config).cuda()
     elif args.weights == "conpono":
         model = BertModel.from_pretrained('./models/conpono', config=config).cuda()
     model.eval()
