@@ -1,3 +1,19 @@
+# DiscoEval for CONPONO
+
+This repo contains the modified code to DiscoEval that
+was used for evaluation in __"Pretraining with Contrastive 
+Sentence Objectives Improves Discourse Performance of 
+Language Models" Iter, Guu, Lansing, Jurafsky. (ACL2020)__
+
+
+
+
+
+
+
+#######################################################
+Below is the original Readme from teh DiscoEval Code that 
+that this repo is branched from.
 # DiscoEval
 
 This repository contains the code for DiscoEval
